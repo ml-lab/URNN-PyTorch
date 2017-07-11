@@ -19,9 +19,9 @@ class RNNModel(nn.Module):
         if rnn_type in ['LSTM', 'GRU']:
             self.rnn = getattr(nn, rnn_type)(ninp, nhid, nlayers, dropout=dropout)
         elif rnn_type == 'URNN':
-            self.rnn = EURNN(ninp, nhid, capacity=2)
+            self.rnn = EURNN(ninp, nhid, nlayers, dropout=dropout, capacity=2)
         elif rnn_type == 'GORU':
-            self.rnn = GORU(ninp, nhid, capacity=2)
+            self.rnn = GORU(ninp, nhid, nlayers, dropout=dropout, capacity=2)
         else:
             try:
                 nonlinearity = {'RNN_TANH': 'tanh', 'RNN_RELU': 'relu'}[rnn_type]

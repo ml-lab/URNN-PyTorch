@@ -16,9 +16,9 @@ class GORUCell(nn.Module):
 		self.U = nn.Parameter(
 			torch.FloatTensor(input_size, hidden_size))
 		self.thetaA = nn.Parameter(
-			torch.FloatTensor(hidden_size/2, capacity/2))
+			torch.FloatTensor(hidden_size//2, capacity//2))
 		self.thetaB = nn.Parameter(
-			torch.FloatTensor(hidden_size/2-1, capacity/2))
+			torch.FloatTensor(hidden_size//2-1, capacity//2))
 		self.bias = nn.Parameter(
 			torch.FloatTensor(hidden_size))
 
@@ -32,7 +32,7 @@ class GORUCell(nn.Module):
 
 	def reset_parameters(self):
 		"""
-		Initialize parameters
+		Initialize parameters  TO DO
 		"""
 		init.uniform(self.thetaA, a=-0.1, b=0.1)
 		init.uniform(self.thetaB, a=-0.1, b=0.1)
@@ -56,27 +56,27 @@ class GORUCell(nn.Module):
 		sinB = torch.sin(self.thetaB)
 		cosB = torch.cos(self.thetaB)
 
-		I = Variable(torch.ones((L/2, 1)))
-		O = Variable(torch.zeros((L/2, 1)))
+		I = Variable(torch.ones((L//2, 1)))
+		O = Variable(torch.zeros((L//2, 1)))
 
 		diagA = torch.stack((cosA, cosA), 2)
 		offA = torch.stack((-sinA, sinA), 2)
 		diagB = torch.stack((cosB, cosB), 2)
 		offB = torch.stack((-sinB, sinB), 2)
 
-		diagA = diagA.view(L/2, N)
-		offA = offA.view(L/2, N)
-		diagB = diagB.view(L/2, N-2)
-		offB = offB.view(L/2, N-2)
+		diagA = diagA.view(L//2, N)
+		offA = offA.view(L//2, N)
+		diagB = diagB.view(L//2, N-2)
+		offB = offB.view(L//2, N-2)
 
 		diagB = torch.cat((I, diagB, I), 1)
 		offB = torch.cat((O, offB, O), 1)
 
 		batch_size = hx.size()[0]
 		x = hx
-		for i in range(L/2):
+		for i in range(L//2):
 # 			# A
-			y = x.view(batch_size, N/2, 2)
+			y = x.view(batch_size, N//2, 2)
 			y = torch.stack((y[:,:,1], y[:,:,0]), 2)
 			y = y.view(batch_size, N)
 
@@ -89,7 +89,7 @@ class GORUCell(nn.Module):
 			x_top = x[:,0]
 			x_mid = x[:,1:-1].contiguous()
 			x_bot = x[:,-1]
-			y = x_mid.view(batch_size, N/2-1, 2)
+			y = x_mid.view(batch_size, N//2-1, 2)
 			y = torch.stack((y[:, :, 1], y[:, :, 0]), 1)
 			y = y.view(batch_size, N-2)
 			x_top = torch.unsqueeze(x_top, 1)
@@ -151,22 +151,32 @@ class GORU(nn.Module):
 
 	"""A module that runs multiple steps of GORU."""
 
-	def __init__(self, input_size, hidden_size, capacity,
-				 batch_first=False, **kwargs):
+	def __init__(self, input_size, hidden_size, num_layer, cell_class=GORUCell, capacity=2,
+				 use_bias=True, batch_first=False, dropout = 0, **kwargs):
 		super(GORU, self).__init__()
+		self.cell_class = cell_class
 		self.input_size = input_size
 		self.hidden_size = hidden_size
+		self.num_layer = num_layer
 		self.capacity = capacity
 		self.batch_first = batch_first
+		self.dropout = dropout
 
-		self.cell = GORUCell(input_size=input_size,
+		self.cells = []
+		for layer in range(num_layer):
+			layer_input_size = input_size if layer == 0 else hidden_size
+			cell = cell_class(input_size=layer_input_size,
 							  hidden_size=hidden_size,
 							  capacity=capacity,
 							  **kwargs)
+			self.cells.append(cell)
+			setattr(self, 'cell_{}'.format(layer), cell)
+		self.dropout_layer = nn.Dropout(dropout)
 		self.reset_parameters()
 
 	def reset_parameters(self):
-		self.cell.reset_parameters()
+		for cell in self.cells:
+			cell.reset_parameters()
 
 	@staticmethod
 	def _forward_rnn(cell, input_, length, hx):
@@ -190,7 +200,15 @@ class GORU(nn.Module):
 				length = length.cuda()
 		if hx is None:
 			hx = Variable(input_.data.new(batch_size, self.hidden_size).zero_())
-		output, h_n = GORU._forward_rnn(
-				cell=self.cell, input_=input_, length=length, hx=hx)
+		
+		h_n = []
+		layer_output = None
+		for layer in range(self.num_layer):
+			layer_output, layer_h_n = GORU._forward_rnn(
+				cell=self.cells[layer], input_ = input_, length=length, hx =hx)
+			input_ = self.dropout_layer(layer_output)
+			h_n.append(layer_h_n)
+		output=layer_output
+		h_n = torch.stack(h_n, 0)	
 		return output, h_n
 
